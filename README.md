@@ -1,6 +1,6 @@
 # Separable Box-Constrained Sum-Equality QP Layer
 
-A lightweight PyTorch layer for projecting vectors onto a box with a single sum-equality constraint. The projection is solved in closed form via a 1D root find, making it fast, deterministic, and fully differentiable. This README condenses the full demo report in [`demo_outputs_v2/separable_QP_demo.md`](demo_outputs_v2/separable_QP_demo.md) and links to key visualizations produced by `demo_separable_qp_layer.py`.
+A lightweight PyTorch layer for projecting vectors onto a box with a single sum-equality constraint. The projection is solved in closed form via a 1D root find, making it fast, deterministic, and fully differentiable. This README highlights the figures produced by `demo_separable_qp_layer.py` (saved under [`demo_outputs/`](demo_outputs/)).
 
 ## Problem statement
 For each row $x \in \mathbb{R}^N$ we solve
@@ -59,12 +59,12 @@ loss.backward()
 To explore additional modes (learnable $\xi$, non-uniform $\gamma$, k-hot budgets, etc.), see the runnable examples in `demo_separable_qp_layer.py`.
 
 ## Visual intuition
-The demo script generates figures under [`demo_outputs_v2/`](demo_outputs_v2/) that illustrate common regimes:
+The demo script generates figures under [`demo_outputs/`](demo_outputs/) that illustrate common regimes:
 
-- **Simplex-like activation:** compares the QP projection to softmax on $m=0$, $M=1$, $\xi=1$, $\gamma=1$ (e.g., the consolidated histogram panels in [`simplex_value_panels.png`](demo_outputs_v2/simplex_value_panels.png)).
-- **k-hot / budgeted gating:** enforces $\sum x = k$ with box bounds (e.g., [`khot_sorted_profiles_quantiles.png`](demo_outputs_v2/khot_sorted_profiles_quantiles.png) and the compact distributions in [`khot_value_panels.png`](demo_outputs_v2/khot_value_panels.png)).
-- **Geometry (2D):** shows contours, feasible segment, and solution for $N=2$ ([`contour_n2_improved.png`](demo_outputs_v2/contour_n2_improved.png)).
-- **Effect of stiffness $\gamma$:** redistributes mass according to per-dimension weights ([`gamma_group_mass_compare.png`](demo_outputs_v2/gamma_group_mass_compare.png)).
+- **Simplex-like activation:** compares the QP projection to softmax on $m=0$, $M=1$, $\xi=1$, $\gamma=1$ (e.g., the consolidated histogram panels in [`simplex_value_panels.png`](demo_outputs/simplex_value_panels.png) and the combined view in [`simplex_support_topk_panel.png`](demo_outputs/simplex_support_topk_panel.png)).
+- **k-hot / budgeted gating:** enforces $\sum x = k$ with box bounds (e.g., [`khot_sorted_profiles_quantiles.png`](demo_outputs/khot_sorted_profiles_quantiles.png) and [`khot_support_topk_panel.png`](demo_outputs/khot_support_topk_panel.png)).
+- **Geometry (2D):** shows contours, feasible segment, and solution for $N=2$ ([`contour_n2_geometry.png`](demo_outputs/contour_n2_geometry.png)).
+- **Effect of stiffness $\gamma$:** redistributes mass according to per-dimension weights ([`gamma_group_mass_compare.png`](demo_outputs/gamma_group_mass_compare.png)).
 
 Place the README next to the images to keep relative links valid.
 
@@ -81,7 +81,7 @@ The `requirements.txt` pins the runtime needs for both the layer and the demo (P
 ```bash
 python demo_separable_qp_layer.py --help
 ```
-The script emits PNGs and printed statistics (row sums, support sizes, entropy, feasibility checks) to `demo_outputs_v2/`. The report [`demo_outputs_v2/separable_QP_demo.md`](demo_outputs_v2/separable_QP_demo.md) explains every figure and statistic in detail and includes troubleshooting tips for blank plots or feasibility errors.
+The script emits PNGs and printed statistics (row sums, support sizes, entropy, feasibility checks) to `demo_outputs/`.
 
 ## When to use this layer
 - **Deterministic constrained activations:** enforce exact budgets in attention, gating, or allocation modules.
