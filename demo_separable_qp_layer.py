@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import os
 from dataclasses import dataclass
+from itertools import cycle
 from typing import Dict, Tuple
 
 import matplotlib.pyplot as plt
@@ -167,15 +168,26 @@ def plot_value_panels(
     xlim: Tuple[float, float] | None = None,
     bins: int = 120,
     eps: float = 1e-12,
+    vline: float | None = 0.0,
 ) -> None:
-    """Compact view: linear hist, log-y hist, and log10(x+eps) side-by-side."""
+    """
+    Compact view: linear hist, log-y hist, and log10(x+eps) side-by-side.
+
+    A thin reference line is drawn on the value-based panels so that sparse
+    distributions still reveal where zero lies; the log10 view uses the clamped
+    epsilon as the comparable baseline. The log panel keeps independent axes so
+    that log-y scaling does not distort the linear view.
+    """
     fig, axes = plt.subplots(1, 3, figsize=(14.5, 4.4), sharey=False)
     for ax, (logy, xlabel) in zip(
         axes,
         [(False, "value"), (True, "value"), (False, "log10(value)")],
     ):
         for name, x in series.items():
-            data = to_np(x.reshape(-1)) if xlabel == "value" else to_np(torch.log10(torch.clamp(x, min=eps)).reshape(-1))
+            if xlabel == "value":
+                data = to_np(x.reshape(-1))
+            else:
+                data = to_np(torch.log10(torch.clamp(x, min=eps)).reshape(-1))
             ax.hist(
                 data,
                 bins=bins,
@@ -184,6 +196,11 @@ def plot_value_panels(
                 label=name if xlabel == "value" else f"log10({name})",
                 histtype="stepfilled",
             )
+        if vline is not None:
+            if xlabel == "log10(value)":
+                ax.axvline(np.log10(max(vline, eps)), color="k", linestyle="--", linewidth=1.1, alpha=0.7, label="baseline")
+            else:
+                ax.axvline(vline, color="k", linestyle="--", linewidth=1.1, alpha=0.7, label="baseline")
         if logy:
             ax.set_yscale("log")
         if xlabel == "value" and xlim is not None:
@@ -248,6 +265,62 @@ def plot_sorted_profiles_quantiles(
     plt.ylabel("value")
     plt.legend()
     savefig(path)
+
+
+def plot_sorted_profiles_panel(
+    path: str,
+    title: str,
+    series: Dict[str, torch.Tensor],
+    qs: Tuple[float, float, float] = (0.1, 0.5, 0.9),
+    logy: bool = False,
+    tol: float = 1e-12,
+    include_support_hist: bool = False,
+) -> None:
+    """
+    Overlay quantile bands for multiple series and (optionally) attach a support
+    size histogram when comparing methods directly (e.g., QP vs softmax).
+    """
+    colors = cycle(plt.rcParams["axes.prop_cycle"].by_key().get("color", []))
+    fig, axes = plt.subplots(1, 2 if include_support_hist else 1, figsize=(12.5 if include_support_hist else 7.5, 4.6))
+    if not isinstance(axes, np.ndarray):
+        axes = np.array([axes])
+    ax_profiles = axes[0]
+    idx = None
+
+    for name, x in series.items():
+        xs = torch.sort(x.detach(), dim=-1, descending=True).values  # (B,N)
+        if idx is None:
+            idx = torch.arange(xs.shape[-1]).cpu().numpy()
+        q_lo = torch.quantile(xs, qs[0], dim=0)
+        q_md = torch.quantile(xs, qs[1], dim=0)
+        q_hi = torch.quantile(xs, qs[2], dim=0)
+
+        color = next(colors)
+        ax_profiles.fill_between(idx, to_np(q_lo), to_np(q_hi), alpha=0.18, color=color, label=f"{name} q{qs[0]:.1f}-{qs[2]:.1f}")
+        ax_profiles.plot(idx, to_np(q_md), color=color, linewidth=2.0, label=f"{name} median")
+
+        if include_support_hist and len(axes) > 1:
+            l0 = (x.detach() > tol).sum(dim=-1).cpu().numpy()
+            bins = np.arange(-0.5, xs.shape[-1] + 1.5, 1.0)
+            axes[1].hist(l0, bins=bins, alpha=0.55, label=name, rwidth=0.9)
+
+    if logy:
+        ax_profiles.set_yscale("log")
+    ax_profiles.set_title("Sorted profile quantiles")
+    ax_profiles.set_xlabel("sorted index")
+    ax_profiles.set_ylabel("value")
+    ax_profiles.legend()
+
+    if include_support_hist and len(axes) > 1:
+        axes[1].set_title("Support size distribution")
+        axes[1].set_xlabel("support size (# nonzeros)")
+        axes[1].set_ylabel("count")
+        axes[1].legend()
+
+    fig.suptitle(title)
+    fig.tight_layout()
+    fig.savefig(path, dpi=170)
+    plt.close(fig)
 
 
 def plot_support_size_hist(
@@ -407,8 +480,8 @@ def plot_piecewise_with_free_count(
     fig, ax1 = plt.subplots(figsize=(9, 4.8))
     for i in range(min(N, 10)):
         ax1.plot(to_np(xis), to_np(X[:, i]), alpha=0.85, linewidth=1.3)
-    ax1.set_xlabel("xi")
-    ax1.set_ylabel("x_i")
+    ax1.set_xlabel(r"$\\xi$")
+    ax1.set_ylabel(r"$x_i$")
     ax1.set_title(title)
 
     ax2 = ax1.twinx()
@@ -494,20 +567,16 @@ def demo_simplex_vs_softmax(cfg: DemoCfg) -> None:
         xlim=(0.0, 0.25),
         bins=120,
         eps=cfg.eps_logx,
+        vline=0.0,
     )
 
-    # sorted profile quantiles
-    plot_sorted_profiles_quantiles(
-        os.path.join(cfg.out_dir, "simplex_sorted_profiles_qp_quantiles.png"),
-        "Sorted profiles (QP): quantile band (higher is sparser)",
-        x_qp,
+    # sorted profile quantiles + support histogram (combined view)
+    plot_sorted_profiles_panel(
+        os.path.join(cfg.out_dir, "simplex_sorted_profiles_panel.png"),
+        "Sorted profiles (QP vs Softmax)",
+        {"QP": x_qp, "Softmax": x_sm},
         logy=True,
-    )
-    plot_sorted_profiles_quantiles(
-        os.path.join(cfg.out_dir, "simplex_sorted_profiles_softmax_quantiles.png"),
-        "Sorted profiles (Softmax): quantile band (softer decay)",
-        x_sm,
-        logy=True,
+        include_support_hist=True,
     )
 
     # Support size + top-k mass combined panel
@@ -987,12 +1056,17 @@ def demo_geometry_n2(cfg: DemoCfg) -> None:
 
     plt.figure(figsize=(7.2, 6.0))
     plt.contour(to_np(X1), to_np(X2), to_np(Fval), levels=25)
-    plt.plot(to_np(x1_seg[mask]), to_np(x2_seg[mask]), linewidth=2.3, label="feasible (sum=xi)")
+    plt.plot(
+        to_np(x1_seg[mask]),
+        to_np(x2_seg[mask]),
+        linewidth=2.3,
+        label=r"feasible ($\sum_i x_i = \xi$)",
+    )
     plt.scatter([z[0].item()], [z[1].item()], marker="x", s=80, label="unconstrained minimizer z")
     plt.scatter([x_star[0].item()], [x_star[1].item()], s=80, label="projected solution x*")
     plt.title(r"N=2 geometry: contours + feasible $\sum_i x_i = \xi$ + solution")
-    plt.xlabel("x1")
-    plt.ylabel("x2")
+    plt.xlabel(r"$x_1$")
+    plt.ylabel(r"$x_2$")
     plt.legend()
     savefig(os.path.join(cfg.out_dir, "contour_n2_geometry.png"))
 
