@@ -326,7 +326,7 @@ def plot_support_and_topk_panel(
     ax_r.set_title("Mean cumulative mass by top-k")
     ax_r.legend()
 
-    fig.suptitle(rf"{title}\nB={B}, N={N}, sum target $\\xi={xi}$")
+    fig.suptitle(rf"{title}\nB={B}, N={N}, sum target $\xi={xi}$")
     fig.tight_layout()
     fig.savefig(path, dpi=170)
     plt.close(fig)
@@ -489,7 +489,7 @@ def demo_simplex_vs_softmax(cfg: DemoCfg) -> None:
 
     plot_value_panels(
         os.path.join(cfg.out_dir, "simplex_value_panels.png"),
-        rf"QP simplex projection vs Softmax ($\\sum_i x_i = 1$, B={B}, N={N})",
+        rf"QP simplex projection vs Softmax ($\sum_i x_i = 1$, B={B}, N={N})",
         {"QP": x_qp, "Softmax": x_sm},
         xlim=(0.0, 0.25),
         bins=120,
@@ -574,7 +574,7 @@ def demo_k_hot_budget(cfg: DemoCfg) -> None:
 
     plot_value_panels(
         os.path.join(cfg.out_dir, "khot_value_panels.png"),
-        rf"k-hot relaxed gating ($\\sum_i x_i = {k}$, B={B}, N={N})",
+        rf"k-hot relaxed gating ($\sum_i x_i = {k}$, B={B}, N={N})",
         {"QP": x},
         xlim=(0.0, 1.0),
         bins=140,
@@ -639,7 +639,7 @@ def demo_adaptive_xi(cfg: DemoCfg) -> None:
     plt.figure(figsize=(8, 4.5))
     plt.plot(to_np(ts), np.array(mean_sums), label="mean(sum x)")
     plt.plot(to_np(ts), np.array(mean_L0), label="mean(support size)")
-    plt.title(rf"Adaptive $\\xi$: effect of t on $\\sum_i x_i$ and sparsity (B={B}, N={N})")
+    plt.title(rf"Adaptive $\xi$: effect of t on $\sum_i x_i$ and sparsity (B={B}, N={N})")
     plt.xlabel("t")
     plt.legend()
     savefig(os.path.join(cfg.out_dir, "adaptive_xi_curve.png"))
@@ -654,7 +654,7 @@ def demo_adaptive_xi(cfg: DemoCfg) -> None:
 
     plot_hist(
         os.path.join(cfg.out_dir, "adaptive_xi_value_hist_logy.png"),
-        rf"Adaptive $\\xi$: value distributions (log-y, N={N})",
+        rf"Adaptive $\xi$: value distributions (log-y, N={N})",
         {k: v for k, v in series.items()},
         bins=120,
         density=True,
@@ -903,7 +903,7 @@ def demo_solve_from_beta(cfg: DemoCfg) -> None:
 
     plot_value_panels(
         os.path.join(cfg.out_dir, "solve_from_beta_value_panels.png"),
-        rf"Solve-from-beta ($\\sum_i x_i = 1$, B={B}, N={N})",
+        rf"Solve-from-beta ($\sum_i x_i = 1$, B={B}, N={N})",
         {"x": x},
         xlim=(0.0, 1.0),
         bins=120,
@@ -990,7 +990,7 @@ def demo_geometry_n2(cfg: DemoCfg) -> None:
     plt.plot(to_np(x1_seg[mask]), to_np(x2_seg[mask]), linewidth=2.3, label="feasible (sum=xi)")
     plt.scatter([z[0].item()], [z[1].item()], marker="x", s=80, label="unconstrained minimizer z")
     plt.scatter([x_star[0].item()], [x_star[1].item()], s=80, label="projected solution x*")
-    plt.title(r"N=2 geometry: contours + feasible $\\sum_i x_i = ξ$ + solution")
+    plt.title(r"N=2 geometry: contours + feasible $\sum_i x_i = \xi$ + solution")
     plt.xlabel("x1")
     plt.ylabel("x2")
     plt.legend()

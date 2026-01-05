@@ -6,7 +6,7 @@ from typing import Tuple
 import pytest
 import torch
 
-from closed_form_QP_layer.separable_qp_layer import (
+from separable_qp_layer import (
     BetaToZ,
     BoundsParam,
     Epsilons,
