@@ -61,7 +61,7 @@ To explore additional modes (learnable $\xi$, non-uniform $\gamma$, k-hot budget
 ## Visual intuition
 The demo script generates figures under [`demo_outputs/`](demo_outputs/) that illustrate common regimes:
 
-- **Simplex-like activation:** compares the QP projection to softmax on $m=0$, $M=1$, $\xi=1$, $\gamma=1$ (e.g., the consolidated histogram panels in [`simplex_value_panels.png`](demo_outputs/simplex_value_panels.png) and the combined view in [`simplex_support_topk_panel.png`](demo_outputs/simplex_support_topk_panel.png)).
+- **Simplex-like activation:** compares the QP projection to softmax on $m=0$, $M=1$, $\xi=1$, $\gamma=1$ (e.g., the consolidated histogram panels in [`simplex_value_panels.png`](demo_outputs/simplex_value_panels.png), sorted-profile + support overlay in [`simplex_sorted_profiles_panel.png`](demo_outputs/simplex_sorted_profiles_panel.png), and the combined view in [`simplex_support_topk_panel.png`](demo_outputs/simplex_support_topk_panel.png)).
 - **k-hot / budgeted gating:** enforces $\sum x = k$ with box bounds (e.g., [`khot_sorted_profiles_quantiles.png`](demo_outputs/khot_sorted_profiles_quantiles.png) and [`khot_support_topk_panel.png`](demo_outputs/khot_support_topk_panel.png)).
 - **Geometry (2D):** shows contours, feasible segment, and solution for $N=2$ ([`contour_n2_geometry.png`](demo_outputs/contour_n2_geometry.png)).
 - **Effect of stiffness $\gamma$:** redistributes mass according to per-dimension weights ([`gamma_group_mass_compare.png`](demo_outputs/gamma_group_mass_compare.png)).
