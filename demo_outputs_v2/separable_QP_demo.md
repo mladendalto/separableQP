@@ -581,7 +581,7 @@ The quantile band collapses to a thin region (often almost a single curve).
 
 ### Figure GEO — N=2 objective contours + feasible set segment + solution
 
-![N=2 geometry](contour_n2_improved.png)
+![N=2 geometry](contour_n2_geometry.png)
 
 How to read this plot:
 
@@ -669,4 +669,4 @@ The demo script writes (at least) these figures:
 - **Fixed $z$:**
   `fixed_z_hist_logy.png`, `fixed_z_sorted_profiles_quantiles.png`
 - **Geometry:**
-  `contour_n2_improved.png`
+  `contour_n2_geometry.png`

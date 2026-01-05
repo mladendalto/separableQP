@@ -6,6 +6,7 @@ from typing import Dict, Tuple
 
 import matplotlib.pyplot as plt
 import numpy as np
+import pandas as pd
 import torch
 import torch.nn.functional as F
 
@@ -23,7 +24,7 @@ def set_seed(seed: int = 0) -> None:
 
 @dataclass(frozen=True)
 class DemoCfg:
-    out_dir: str = "demo_outputs_v2"
+    out_dir: str = "demo_outputs"
     device: str = "cpu"
     dtype: torch.dtype = torch.float32
     b: int = 256
@@ -42,6 +43,18 @@ def savefig(path: str) -> None:
 
 def to_np(x: torch.Tensor) -> np.ndarray:
     return x.detach().cpu().numpy()
+
+
+def print_stats_table(title: str, rows: Dict[str, Dict[str, float]]) -> None:
+    """Pretty-print nested dictionaries as a small table."""
+    df = pd.DataFrame(rows).T
+    with pd.option_context(
+        "display.max_rows", None,
+        "display.max_columns", None,
+        "display.width", 1000,
+        "display.float_format", lambda v: f"{v:8.4f}",
+    ):
+        print(f"\n{title}\n{df}\n")
 
 
 def simplex_projection_reference(v: torch.Tensor, s: float = 1.0) -> torch.Tensor:
@@ -120,6 +133,7 @@ def plot_hist(
     logy: bool = False,
     xlim: Tuple[float, float] | None = None,
     rug: bool = False,
+    xlabel: str = "value",
 ) -> None:
     plt.figure(figsize=(8, 4.5))
     ax = plt.gca()
@@ -141,6 +155,7 @@ def plot_hist(
     if xlim is not None:
         plt.xlim(*xlim)
     plt.title(title)
+    plt.xlabel(xlabel)
     plt.legend()
     savefig(path)
 
@@ -273,6 +288,48 @@ def plot_topk_mass_curve(
         plt.axhline(total_mass, color="k", linestyle="--", linewidth=1.2, alpha=0.7, label="total mass")
         plt.legend()
     savefig(path)
+
+
+def plot_support_and_topk_panel(
+    path: str,
+    title: str,
+    series: Dict[str, torch.Tensor],
+    xi: float,
+    max_k: int = 50,
+    tol: float = 1e-12,
+) -> None:
+    """Compact view: support-size histogram + mean top-k mass curves."""
+    fig, (ax_l, ax_r) = plt.subplots(1, 2, figsize=(13, 4.4))
+    any_x = next(iter(series.values()))
+    B, N = any_x.shape
+    bins = np.arange(-0.5, N + 1.5, 1.0)
+
+    for name, x in series.items():
+        l0 = (x.detach() > tol).sum(dim=-1).cpu().numpy()
+        ax_l.hist(l0, bins=bins, alpha=0.6, label=name, rwidth=0.9)
+
+    ax_l.set_xlabel(f"support size (# nonzeros out of N={N})")
+    ax_l.set_ylabel("count")
+    ax_l.set_title("Support size distribution")
+    ax_l.legend()
+
+    k_vals = np.arange(1, min(max_k, N) + 1)
+    for name, x in series.items():
+        xs = torch.sort(x.detach(), dim=-1, descending=True).values
+        cumsum = torch.cumsum(xs[:, : len(k_vals)], dim=-1)
+        mean_curve = cumsum.mean(dim=0).cpu().numpy()
+        ax_r.plot(k_vals, mean_curve, label=name)
+
+    ax_r.axhline(xi, color="k", linestyle="--", linewidth=1.0, alpha=0.7, label=r"target $\xi$")
+    ax_r.set_xlabel("k (top-k)")
+    ax_r.set_ylabel("mean mass in top-k")
+    ax_r.set_title("Mean cumulative mass by top-k")
+    ax_r.legend()
+
+    fig.suptitle(rf"{title}\nB={B}, N={N}, sum target $\\xi={xi}$")
+    fig.tight_layout()
+    fig.savefig(path, dpi=170)
+    plt.close(fig)
 
 
 def compare_to_high_iter_reference(
@@ -411,17 +468,28 @@ def demo_simplex_vs_softmax(cfg: DemoCfg) -> None:
 
     # sanity + reference errors
     print("\n[Use case 1] Simplex-like: QP projection vs softmax")
-    print("QP stats:", row_stats(x_qp, eps=cfg.eps_logx))
-    print("Softmax stats:", row_stats(x_sm, eps=cfg.eps_logx))
-    print("QP feasibility:", feasibility_stats(x_qp, 0.0, 1.0, 1.0))
-    print("QP vs high-iter ref:", {"mean_abs": float((x_qp - x_qp_ref).abs().mean().item()),
-                                 "max_abs": float((x_qp - x_qp_ref).abs().max().item())})
-    print("QP vs simplex-sort ref:", {"mean_abs": float((x_qp - x_simplex_ref).abs().mean().item()),
-                                    "max_abs": float((x_qp - x_simplex_ref).abs().max().item())})
+    print_stats_table(
+        f"Row-wise summary (B={B}, N={N}, target $\\xi=1$)",
+        {"QP": row_stats(x_qp, eps=cfg.eps_logx), "Softmax": row_stats(x_sm, eps=cfg.eps_logx)},
+    )
+    print_stats_table(
+        "Feasibility checks",
+        {"QP": feasibility_stats(x_qp, 0.0, 1.0, 1.0)},
+    )
+    print_stats_table(
+        "Projection error vs references",
+        {
+            "QP vs high-iter": compare_to_high_iter_reference(proj_fast, proj_ref, z, name="qp"),
+            "QP vs simplex-sort": {
+                "qp_mean_abs_err": float((x_qp - x_simplex_ref).abs().mean().item()),
+                "qp_max_abs_err": float((x_qp - x_simplex_ref).abs().max().item()),
+            },
+        },
+    )
 
     plot_value_panels(
         os.path.join(cfg.out_dir, "simplex_value_panels.png"),
-        "QP simplex projection vs Softmax: value distributions",
+        rf"QP simplex projection vs Softmax ($\\sum_i x_i = 1$, B={B}, N={N})",
         {"QP": x_qp, "Softmax": x_sm},
         xlim=(0.0, 0.25),
         bins=120,
@@ -431,36 +499,24 @@ def demo_simplex_vs_softmax(cfg: DemoCfg) -> None:
     # sorted profile quantiles
     plot_sorted_profiles_quantiles(
         os.path.join(cfg.out_dir, "simplex_sorted_profiles_qp_quantiles.png"),
-        "Sorted profiles (QP): quantile band",
+        "Sorted profiles (QP): quantile band (higher is sparser)",
         x_qp,
         logy=True,
     )
     plot_sorted_profiles_quantiles(
         os.path.join(cfg.out_dir, "simplex_sorted_profiles_softmax_quantiles.png"),
-        "Sorted profiles (Softmax): quantile band",
+        "Sorted profiles (Softmax): quantile band (softer decay)",
         x_sm,
         logy=True,
     )
 
-    # support size + top-k mass curve
-    plot_support_size_hist(
-        os.path.join(cfg.out_dir, "simplex_support_size_qp.png"),
-        "Support size distribution (QP simplex projection)",
-        x_qp,
-    )
-    plot_topk_mass_curve(
-        os.path.join(cfg.out_dir, "simplex_topk_mass_qp.png"),
-        "Mean mass captured by top-k (QP simplex projection)",
-        x_qp,
+    # Support size + top-k mass combined panel
+    plot_support_and_topk_panel(
+        os.path.join(cfg.out_dir, "simplex_support_topk_panel.png"),
+        "Simplex-like projection vs softmax",
+        {"QP": x_qp, "Softmax": x_sm},
+        xi=1.0,
         max_k=50,
-        total_mass=1.0,
-    )
-    plot_topk_mass_curve(
-        os.path.join(cfg.out_dir, "simplex_topk_mass_softmax.png"),
-        "Mean mass captured by top-k (Softmax)",
-        x_sm,
-        max_k=50,
-        total_mass=1.0,
     )
 
     # error to references
@@ -503,32 +559,35 @@ def demo_k_hot_budget(cfg: DemoCfg) -> None:
     x_ref = proj_ref(z)
 
     print("\n[Use case 2] k-hot relaxed gating: x in [0,1], sum x = k")
-    print("Stats:", row_stats(x, eps=cfg.eps_logx))
-    print("Feasibility:", feasibility_stats(x, 0.0, 1.0, k))
-    print("Fast vs high-iter ref:", {"mean_abs": float((x - x_ref).abs().mean().item()),
-                                   "max_abs": float((x - x_ref).abs().max().item())})
+    print_stats_table(
+        f"Row-wise summary (B={B}, N={N}, target $\\xi={k}$)",
+        {"QP": row_stats(x, eps=cfg.eps_logx)},
+    )
+    print_stats_table(
+        "Feasibility checks",
+        {"QP": feasibility_stats(x, 0.0, 1.0, k)},
+    )
+    print_stats_table(
+        "Fast vs high-iter reference",
+        {"QP": compare_to_high_iter_reference(proj_fast, proj_ref, z, name="qp")},
+    )
 
     plot_value_panels(
         os.path.join(cfg.out_dir, "khot_value_panels.png"),
-        f"k-hot relaxed gating (sum={k}): value distributions",
+        rf"k-hot relaxed gating ($\\sum_i x_i = {k}$, B={B}, N={N})",
         {"QP": x},
         xlim=(0.0, 1.0),
         bins=140,
         eps=cfg.eps_logx,
     )
 
-    # support size + top-k mass
-    plot_support_size_hist(
-        os.path.join(cfg.out_dir, "khot_support_size.png"),
-        "Support size distribution (k-hot relaxed)",
-        x,
-    )
-    plot_topk_mass_curve(
-        os.path.join(cfg.out_dir, "khot_topk_mass.png"),
-        "Mean mass captured by top-k (k-hot relaxed)",
-        x,
+    # Support size + top-k mass
+    plot_support_and_topk_panel(
+        os.path.join(cfg.out_dir, "khot_support_topk_panel.png"),
+        "k-hot relaxed gating",
+        {"QP": x},
+        xi=k,
         max_k=60,
-        total_mass=k,
     )
 
     # sorted quantiles
@@ -580,7 +639,7 @@ def demo_adaptive_xi(cfg: DemoCfg) -> None:
     plt.figure(figsize=(8, 4.5))
     plt.plot(to_np(ts), np.array(mean_sums), label="mean(sum x)")
     plt.plot(to_np(ts), np.array(mean_L0), label="mean(support size)")
-    plt.title("Adaptive xi: effect of t on total mass and sparsity")
+    plt.title(rf"Adaptive $\\xi$: effect of t on $\\sum_i x_i$ and sparsity (B={B}, N={N})")
     plt.xlabel("t")
     plt.legend()
     savefig(os.path.join(cfg.out_dir, "adaptive_xi_curve.png"))
@@ -595,19 +654,19 @@ def demo_adaptive_xi(cfg: DemoCfg) -> None:
 
     plot_hist(
         os.path.join(cfg.out_dir, "adaptive_xi_value_hist_logy.png"),
-        "Adaptive xi: value distributions (log-y)",
+        rf"Adaptive $\\xi$: value distributions (log-y, N={N})",
         {k: v for k, v in series.items()},
         bins=120,
         density=True,
         logy=True,
         xlim=(0.0, 1.0),
+        xlabel=r"projected value $x_i$",
     )
 
 
 def demo_learnable_bounds_unit(cfg: DemoCfg) -> None:
     """
     Toy: learn bounds (unit mode) so projected outputs match a target.
-    Improved visualization: initial vs final bounds + widths + output-vs-target error.
     """
     set_seed(1)
     B, N = 128, 30
@@ -644,13 +703,24 @@ def demo_learnable_bounds_unit(cfg: DemoCfg) -> None:
         err = (x_final - x_target).abs()
 
     print("\n[Use case 4] Learnable bounds (unit) + fit-to-target toy training")
-    print("Final loss:", losses[-1])
-    print("Initial bounds summary:",
-          {"m_mean": float(m0.mean().item()), "M_mean": float(M0.mean().item()), "width_mean": float((M0 - m0).mean().item())})
-    print("Final bounds summary:",
-          {"m_mean": float(m1.mean().item()), "M_mean": float(M1.mean().item()), "width_mean": float((M1 - m1).mean().item())})
-    print("Final output feasibility:", feasibility_stats(x_final, 0.0, 1.0, 1.0))
-    print("Final |x-target| mean/max:", float(err.mean().item()), float(err.max().item()))
+    print_stats_table(
+        "Loss trajectory",
+        {"MSE": {"final_loss": losses[-1], "min_loss": min(losses)}},
+    )
+    print_stats_table(
+        "Bounds summary (mean values)",
+        {
+            "initial": {"m_mean": float(m0.mean().item()), "M_mean": float(M0.mean().item()), "width_mean": float((M0 - m0).mean().item())},
+            "final": {"m_mean": float(m1.mean().item()), "M_mean": float(M1.mean().item()), "width_mean": float((M1 - m1).mean().item())},
+        },
+    )
+    print_stats_table(
+        "Final feasibility and error",
+        {
+            "x_final": feasibility_stats(x_final, 0.0, 1.0, 1.0)
+            | {"abs_err_mean": float(err.mean().item()), "abs_err_max": float(err.max().item())}
+        },
+    )
 
     # loss curve (log-y helps)
     plt.figure(figsize=(8, 4.5))
@@ -746,8 +816,10 @@ def demo_gamma_effect(cfg: DemoCfg) -> None:
     x_c = proj_custom(z)
 
     print("\n[Use case 5] Gamma (curvature) effect")
-    print("Uniform stats:", row_stats(x_u, eps=cfg.eps_logx))
-    print("Custom stats:", row_stats(x_c, eps=cfg.eps_logx))
+    print_stats_table(
+        f"Row-wise summary (B={B}, N={N}, target $\\xi=1$)",
+        {"uniform": row_stats(x_u, eps=cfg.eps_logx), "custom": row_stats(x_c, eps=cfg.eps_logx)},
+    )
 
     # Group mass distributions (three subplots, clearer than overlaying)
     def group_sums(x: torch.Tensor) -> torch.Tensor:
@@ -790,10 +862,7 @@ def demo_gamma_effect(cfg: DemoCfg) -> None:
 
 def demo_solve_from_beta(cfg: DemoCfg) -> None:
     """
-    Improve the plot by:
-      - using log-y and log10(x+eps)
-      - including a numerical reference (high-iter)
-      - printing KKT free-residual variance as an internal sanity check
+    Solve directly from beta coefficients and compare to a high-iteration reference.
     """
     set_seed(3)
     B, N = 128, 40
@@ -815,15 +884,26 @@ def demo_solve_from_beta(cfg: DemoCfg) -> None:
     M = torch.ones_like(beta)
 
     print("\n[Use case 6] Solve from beta (z=-beta/(2gamma))")
-    print("Stats:", row_stats(x, eps=cfg.eps_logx))
-    print("Feasibility:", feasibility_stats(x, 0.0, 1.0, 1.0))
-    print("Fast vs high-iter ref:", {"mean_abs": float((x - x_ref).abs().mean().item()),
-                                   "max_abs": float((x - x_ref).abs().max().item())})
-    print("KKT free residual var stats:", kkt_free_residual_stats(z=z, x=x, gamma=gamma, m=m, M=M))
+    print_stats_table(
+        f"Row-wise summary (B={B}, N={N}, target $\\xi=1$)",
+        {"x": row_stats(x, eps=cfg.eps_logx)},
+    )
+    print_stats_table(
+        "Feasibility checks",
+        {"x": feasibility_stats(x, 0.0, 1.0, 1.0)},
+    )
+    print_stats_table(
+        "Fast vs high-iter reference",
+        {"x": compare_to_high_iter_reference(proj_fast, proj_ref, z, name="x")},
+    )
+    print_stats_table(
+        "KKT free-residual variance",
+        {"free_set": kkt_free_residual_stats(z=z, x=x, gamma=gamma, m=m, M=M)},
+    )
 
     plot_value_panels(
         os.path.join(cfg.out_dir, "solve_from_beta_value_panels.png"),
-        "Solve-from-beta: value distributions",
+        rf"Solve-from-beta ($\\sum_i x_i = 1$, B={B}, N={N})",
         {"x": x},
         xlim=(0.0, 1.0),
         bins=120,
@@ -910,13 +990,13 @@ def demo_geometry_n2(cfg: DemoCfg) -> None:
     plt.plot(to_np(x1_seg[mask]), to_np(x2_seg[mask]), linewidth=2.3, label="feasible (sum=xi)")
     plt.scatter([z[0].item()], [z[1].item()], marker="x", s=80, label="unconstrained minimizer z")
     plt.scatter([x_star[0].item()], [x_star[1].item()], s=80, label="projected solution x*")
-    plt.title("N=2 geometry: objective contours + feasible set + solution")
+    plt.title(r"N=2 geometry: contours + feasible $\\sum_i x_i = ξ$ + solution")
     plt.xlabel("x1")
     plt.ylabel("x2")
     plt.legend()
-    savefig(os.path.join(cfg.out_dir, "contour_n2_improved.png"))
+    savefig(os.path.join(cfg.out_dir, "contour_n2_geometry.png"))
 
-    print("\n[Geometry] N=2 contour demo saved (improved).")
+    print("\n[Geometry] N=2 contour demo saved.")
 
 
 def main() -> None:
