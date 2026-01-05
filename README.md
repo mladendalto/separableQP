@@ -61,8 +61,8 @@ To explore additional modes (learnable $\xi$, non-uniform $\gamma$, k-hot budget
 ## Visual intuition
 The demo script generates figures under [`demo_outputs_v2/`](demo_outputs_v2/) that illustrate common regimes:
 
-- **Simplex-like activation:** compares the QP projection to softmax on $m=0$, $M=1$, $\xi=1$, $\gamma=1$ (e.g., [`simplex_hist_linear.png`](demo_outputs_v2/simplex_hist_linear.png)).
-- **k-hot / budgeted gating:** enforces $\sum x = k$ with box bounds (e.g., [`khot_sorted_profiles_quantiles.png`](demo_outputs_v2/khot_sorted_profiles_quantiles.png)).
+- **Simplex-like activation:** compares the QP projection to softmax on $m=0$, $M=1$, $\xi=1$, $\gamma=1$ (e.g., the consolidated histogram panels in [`simplex_value_panels.png`](demo_outputs_v2/simplex_value_panels.png)).
+- **k-hot / budgeted gating:** enforces $\sum x = k$ with box bounds (e.g., [`khot_sorted_profiles_quantiles.png`](demo_outputs_v2/khot_sorted_profiles_quantiles.png) and the compact distributions in [`khot_value_panels.png`](demo_outputs_v2/khot_value_panels.png)).
 - **Geometry (2D):** shows contours, feasible segment, and solution for $N=2$ ([`contour_n2_improved.png`](demo_outputs_v2/contour_n2_improved.png)).
 - **Effect of stiffness $\gamma$:** redistributes mass according to per-dimension weights ([`gamma_group_mass_compare.png`](demo_outputs_v2/gamma_group_mass_compare.png)).
 

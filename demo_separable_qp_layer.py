@@ -145,6 +145,43 @@ def plot_hist(
     savefig(path)
 
 
+def plot_value_panels(
+    path: str,
+    title: str,
+    series: Dict[str, torch.Tensor],
+    xlim: Tuple[float, float] | None = None,
+    bins: int = 120,
+    eps: float = 1e-12,
+) -> None:
+    """Compact view: linear hist, log-y hist, and log10(x+eps) side-by-side."""
+    fig, axes = plt.subplots(1, 3, figsize=(14.5, 4.4), sharey=False)
+    for ax, (logy, xlabel) in zip(
+        axes,
+        [(False, "value"), (True, "value"), (False, "log10(value)")],
+    ):
+        for name, x in series.items():
+            data = to_np(x.reshape(-1)) if xlabel == "value" else to_np(torch.log10(torch.clamp(x, min=eps)).reshape(-1))
+            ax.hist(
+                data,
+                bins=bins,
+                density=True,
+                alpha=0.6,
+                label=name if xlabel == "value" else f"log10({name})",
+                histtype="stepfilled",
+            )
+        if logy:
+            ax.set_yscale("log")
+        if xlabel == "value" and xlim is not None:
+            ax.set_xlim(*xlim)
+        ax.set_xlabel(xlabel)
+        ax.set_title("log-y" if logy else ("log10" if "log10" in xlabel else "linear"))
+        ax.legend()
+    fig.suptitle(title)
+    fig.tight_layout()
+    fig.savefig(path, dpi=170)
+    plt.close(fig)
+
+
 def plot_hist_logx(
     path: str,
     title: str,
@@ -206,7 +243,9 @@ def plot_support_size_hist(
 ) -> None:
     l0 = (x.detach() > tol).sum(dim=-1).cpu().numpy()
     plt.figure(figsize=(8, 4.5))
-    plt.hist(l0, bins=40, alpha=0.7)
+    max_count = int(l0.max())
+    bins = np.arange(-0.5, max_count + 1.5, 1.0)
+    plt.hist(l0, bins=bins, alpha=0.7, rwidth=0.9)
     plt.title(title)
     plt.xlabel("support size (# nonzeros)")
     plt.ylabel("count")
@@ -218,6 +257,7 @@ def plot_topk_mass_curve(
     title: str,
     x: torch.Tensor,
     max_k: int = 50,
+    total_mass: float | None = None,
 ) -> None:
     xs = torch.sort(x.detach(), dim=-1, descending=True).values  # (B,N)
     max_k = min(max_k, xs.shape[-1])
@@ -229,6 +269,9 @@ def plot_topk_mass_curve(
     plt.title(title)
     plt.xlabel("k")
     plt.ylabel("mean mass in top-k")
+    if total_mass is not None:
+        plt.axhline(total_mass, color="k", linestyle="--", linewidth=1.2, alpha=0.7, label="total mass")
+        plt.legend()
     savefig(path)
 
 
@@ -376,34 +419,13 @@ def demo_simplex_vs_softmax(cfg: DemoCfg) -> None:
     print("QP vs simplex-sort ref:", {"mean_abs": float((x_qp - x_simplex_ref).abs().mean().item()),
                                     "max_abs": float((x_qp - x_simplex_ref).abs().max().item())})
 
-    # distributions (linear + log-y)
-    plot_hist(
-        os.path.join(cfg.out_dir, "simplex_hist_linear.png"),
-        "Value distribution (linear): QP simplex projection vs Softmax",
+    plot_value_panels(
+        os.path.join(cfg.out_dir, "simplex_value_panels.png"),
+        "QP simplex projection vs Softmax: value distributions",
         {"QP": x_qp, "Softmax": x_sm},
-        bins=100,
-        density=True,
-        logy=False,
         xlim=(0.0, 0.25),
-    )
-    plot_hist(
-        os.path.join(cfg.out_dir, "simplex_hist_logy.png"),
-        "Value distribution (log-y): QP simplex projection vs Softmax",
-        {"QP": x_qp, "Softmax": x_sm},
-        bins=140,
-        density=True,
-        logy=True,
-        xlim=(0.0, 0.25),
-    )
-
-    # log10(x) distributions (so small values visible)
-    plot_hist_logx(
-        os.path.join(cfg.out_dir, "simplex_hist_log10x.png"),
-        "log10(value) distribution: QP vs Softmax",
-        {"QP": torch.clamp(x_qp, min=cfg.eps_logx), "Softmax": torch.clamp(x_sm, min=cfg.eps_logx)},
-        eps=cfg.eps_logx,
         bins=120,
-        density=True,
+        eps=cfg.eps_logx,
     )
 
     # sorted profile quantiles
@@ -431,12 +453,14 @@ def demo_simplex_vs_softmax(cfg: DemoCfg) -> None:
         "Mean mass captured by top-k (QP simplex projection)",
         x_qp,
         max_k=50,
+        total_mass=1.0,
     )
     plot_topk_mass_curve(
         os.path.join(cfg.out_dir, "simplex_topk_mass_softmax.png"),
         "Mean mass captured by top-k (Softmax)",
         x_sm,
         max_k=50,
+        total_mass=1.0,
     )
 
     # error to references
@@ -484,23 +508,13 @@ def demo_k_hot_budget(cfg: DemoCfg) -> None:
     print("Fast vs high-iter ref:", {"mean_abs": float((x - x_ref).abs().mean().item()),
                                    "max_abs": float((x - x_ref).abs().max().item())})
 
-    # value distribution (log-y is helpful)
-    plot_hist(
-        os.path.join(cfg.out_dir, "khot_hist_logy.png"),
-        f"k-hot relaxed gating value distribution (sum={k}) [log-y]",
+    plot_value_panels(
+        os.path.join(cfg.out_dir, "khot_value_panels.png"),
+        f"k-hot relaxed gating (sum={k}): value distributions",
         {"QP": x},
-        bins=140,
-        density=True,
-        logy=True,
         xlim=(0.0, 1.0),
-    )
-    plot_hist_logx(
-        os.path.join(cfg.out_dir, "khot_hist_log10x.png"),
-        f"k-hot relaxed gating log10(value) (sum={k})",
-        {"QP": torch.clamp(x, min=cfg.eps_logx)},
+        bins=140,
         eps=cfg.eps_logx,
-        bins=120,
-        density=True,
     )
 
     # support size + top-k mass
@@ -514,6 +528,7 @@ def demo_k_hot_budget(cfg: DemoCfg) -> None:
         "Mean mass captured by top-k (k-hot relaxed)",
         x,
         max_k=60,
+        total_mass=k,
     )
 
     # sorted quantiles
@@ -806,23 +821,13 @@ def demo_solve_from_beta(cfg: DemoCfg) -> None:
                                    "max_abs": float((x - x_ref).abs().max().item())})
     print("KKT free residual var stats:", kkt_free_residual_stats(z=z, x=x, gamma=gamma, m=m, M=M))
 
-    # better histograms
-    plot_hist(
-        os.path.join(cfg.out_dir, "solve_from_beta_hist_logy.png"),
-        "Solve-from-beta: value distribution (log-y density)",
+    plot_value_panels(
+        os.path.join(cfg.out_dir, "solve_from_beta_value_panels.png"),
+        "Solve-from-beta: value distributions",
         {"x": x},
-        bins=120,
-        density=True,
-        logy=True,
         xlim=(0.0, 1.0),
-    )
-    plot_hist_logx(
-        os.path.join(cfg.out_dir, "solve_from_beta_hist_log10x.png"),
-        "Solve-from-beta: log10(value) distribution",
-        {"x": torch.clamp(x, min=cfg.eps_logx)},
-        eps=cfg.eps_logx,
         bins=120,
-        density=True,
+        eps=cfg.eps_logx,
     )
     # error vs reference
     err = (x - x_ref).abs()
