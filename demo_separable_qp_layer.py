@@ -1,15 +1,25 @@
 from __future__ import annotations
 
+import csv
 import os
+import time
 from dataclasses import dataclass
 from itertools import cycle
 from typing import Dict, Tuple
 
 import matplotlib.pyplot as plt
 import numpy as np
-import pandas as pd
+try:
+    import pandas as pd
+except ImportError:  # pragma: no cover - optional for pretty tables
+    pd = None
 import torch
 import torch.nn.functional as F
+
+try:
+    from entmax import entmax15, entmax_bisect
+except ImportError:  # pragma: no cover - optional dependency for demos
+    entmax15, entmax_bisect = None, None
 
 from separable_qp_layer import SeparableQPProjection, SeparableQPSolveFromBeta, FixedZProjection
 
@@ -48,6 +58,14 @@ def to_np(x: torch.Tensor) -> np.ndarray:
 
 def print_stats_table(title: str, rows: Dict[str, Dict[str, float]]) -> None:
     """Pretty-print nested dictionaries as a small table."""
+    if pd is None:
+        print(f"\n{title}")
+        for row_name, cols in rows.items():
+            pretty = " ".join([f"{k}={v:0.4f}" for k, v in cols.items()])
+            print(f"  {row_name}: {pretty}")
+        print()
+        return
+
     df = pd.DataFrame(rows).T
     with pd.option_context(
         "display.max_rows", None,
@@ -75,6 +93,52 @@ def simplex_projection_reference(v: torch.Tensor, s: float = 1.0) -> torch.Tenso
     theta = cssv[torch.arange(B, device=v.device), rho] / (rho.to(v.dtype) + 1.0)
     w = torch.clamp(v - theta.unsqueeze(-1), min=0.0)
     return w
+
+
+def sparsemax(logits: torch.Tensor, dim: int = -1) -> torch.Tensor:
+    """Sparsemax (Martins & Astudillo, 2016) implemented in PyTorch."""
+    z = logits
+    z_shifted = z - z.max(dim=dim, keepdim=True).values
+    sorted_z, _ = torch.sort(z_shifted, dim=dim, descending=True)
+    cssv = torch.cumsum(sorted_z, dim=dim) - 1
+    k = torch.arange(1, sorted_z.shape[dim] + 1, device=z.device, dtype=z.dtype)
+    k = k.view(*([1] * (z.dim() - 1)), -1)
+    cond = sorted_z - cssv / k > 0
+    k_z = cond.sum(dim=dim, keepdim=True)
+    tau = cssv.gather(dim, k_z - 1) / k_z
+    return torch.clamp(z_shifted - tau, min=0.0)
+
+
+def entmax15_safe(logits: torch.Tensor, dim: int = -1) -> torch.Tensor:
+    """
+    Wrapper around entmax15 with graceful fallback to sparsemax when the
+    optional dependency is unavailable.
+    """
+    if entmax15 is None:
+        return sparsemax(logits, dim=dim)
+    return entmax15(logits, dim=dim)
+
+
+def entmax_alpha(logits: torch.Tensor, alpha: float, dim: int = -1) -> torch.Tensor:
+    """
+    Entmax with arbitrary alpha using entmax_bisect when available.
+
+    Falls back to exact equivalents when the optional dependency is missing:
+    - alpha <= 1 : softmax
+    - alpha >= 2 : sparsemax
+    - alpha == 1.5 : entmax15_safe
+    - otherwise : sparsemax (provides sparse behavior even if imperfect)
+    """
+
+    if entmax_bisect is not None:
+        return entmax_bisect(logits, alpha=alpha, dim=dim)
+    if alpha <= 1.0:
+        return F.softmax(logits, dim=dim)
+    if alpha >= 2.0:
+        return sparsemax(logits, dim=dim)
+    if abs(alpha - 1.5) < 1e-6:
+        return entmax15_safe(logits, dim=dim)
+    return sparsemax(logits, dim=dim)
 
 
 def row_stats(x: torch.Tensor, eps: float = 1e-12) -> Dict[str, float]:
@@ -140,13 +204,21 @@ def plot_hist(
     ax = plt.gca()
     for name, x in series.items():
         data = to_np(x.reshape(-1))
+        bin_count = bins
+        hist_kwargs = {}
+        if data.size == 0 or np.allclose(data.min(), data.max()):
+            bin_count = min(bins, 20)
+            lo = data.min() - 1e-6 if data.size else -1e-6
+            hi = data.max() + 1e-6 if data.size else 1e-6
+            hist_kwargs["range"] = (lo, hi)
         ax.hist(
             data,
-            bins=bins,
+            bins=bin_count,
             density=density,
             alpha=0.55,
             label=name,
             histtype="stepfilled",
+            **hist_kwargs,
         )
         if rug:
             ax.plot(data, np.zeros_like(data), '|', color='k', alpha=0.3, transform=ax.get_xaxis_transform())
@@ -522,6 +594,182 @@ def kkt_free_residual_stats(
         "num_batches_with_free": float(len(vars_)),
     }
 
+
+# -----------------------------
+# Benchmarks / comparisons
+# -----------------------------
+
+def benchmark_activation_family(
+    methods: Dict[str, callable], shape: Tuple[int, int], iters: int = 80, warmup: int = 10
+) -> list[Dict[str, float]]:
+    x = torch.randn(*shape)
+    rows = []
+    with torch.no_grad():
+        for name, fn in methods.items():
+            for _ in range(warmup):
+                fn(x)
+            start = time.perf_counter()
+            for _ in range(iters):
+                fn(x)
+            elapsed = (time.perf_counter() - start) / iters
+            out = fn(x)
+            l0 = (out > 0).float().sum(dim=-1)
+            ent = -(torch.clamp(out, min=1e-12) * torch.log(torch.clamp(out, min=1e-12))).sum(dim=-1)
+            rows.append(
+                {
+                    "method": name,
+                    "mean_support": float(l0.mean().item()),
+                    "std_support": float(l0.std().item()),
+                    "mean_entropy": float(ent.mean().item()),
+                    "time_ms": float(elapsed * 1000.0),
+                }
+            )
+    return rows
+
+
+def demo_activation_family(cfg: DemoCfg) -> None:
+    """Compare sparsity + runtime across softmax, sparsemax, entmax, and the QP layer."""
+
+    set_seed(7)
+    B, N = 256, 128
+    z = torch.randn(B, N, device=cfg.device, dtype=cfg.dtype)
+
+    proj_qp = SeparableQPProjection(n=N, xi=1.0, bounds_mode="fixed", m_init=0.0, M_init=1.0, bisection_iters=50)
+    activations = {
+        "Softmax": lambda t: F.softmax(t, dim=-1),
+        "Entmax-α=1.0 (softmax)": lambda t: entmax_alpha(t, alpha=1.0, dim=-1),
+        "Sparsemax": lambda t: sparsemax(t, dim=-1),
+        "Entmax-α=1.5": lambda t: entmax_alpha(t, alpha=1.5, dim=-1),
+        "Entmax-α=2.0 (sparsemax)": lambda t: entmax_alpha(t, alpha=2.0, dim=-1),
+        "SeparableQP": lambda t: proj_qp(t),
+    }
+
+    outs = {name: fn(z) for name, fn in activations.items()}
+    print("\n[Comparison] Softmax vs sparse alternatives")
+    print_stats_table(
+        f"Row-wise summary (B={B}, N={N}, target $\\xi=1$)",
+        {name: row_stats(x, eps=cfg.eps_logx) for name, x in outs.items()},
+    )
+
+    plot_value_panels(
+        os.path.join(cfg.out_dir, "activation_family_value_panels.png"),
+        "Activation distributions (value + log views)",
+        outs,
+        xlim=(0.0, 0.25),
+        bins=100,
+        eps=cfg.eps_logx,
+        vline=0.0,
+    )
+
+    plot_sorted_profiles_panel(
+        os.path.join(cfg.out_dir, "activation_family_sorted_profiles.png"),
+        "Sorted profile quantiles across activations",
+        outs,
+        logy=True,
+        include_support_hist=True,
+    )
+
+    plot_support_and_topk_panel(
+        os.path.join(cfg.out_dir, "activation_family_support_topk.png"),
+        "Support sizes and top-k mass",
+        outs,
+        xi=1.0,
+        max_k=40,
+    )
+
+    bench_rows = benchmark_activation_family(activations, shape=(B, N), iters=60, warmup=10)
+    complexity_lookup = {
+        "Softmax": "O(N)",
+        "Entmax-α=1.0 (softmax)": "O(N log N)",
+        "Sparsemax": "O(N log N)",
+        "Entmax-α=1.5": "O(N log N)",
+        "Entmax-α=2.0 (sparsemax)": "O(N log N)",
+        "SeparableQP": "O(N log N)",
+    }
+    for row in bench_rows:
+        row["complexity"] = complexity_lookup.get(row["method"], "")
+
+    if pd is not None:
+        bench_df = pd.DataFrame(bench_rows)
+        bench_df.to_csv(os.path.join(cfg.out_dir, "activation_family_profile.csv"), index=False)
+        bench_plot = bench_df
+    else:
+        csv_path = os.path.join(cfg.out_dir, "activation_family_profile.csv")
+        with open(csv_path, "w", newline="") as f:
+            writer = csv.DictWriter(f, fieldnames=list(bench_rows[0].keys()))
+            writer.writeheader()
+            writer.writerows(bench_rows)
+        bench_plot = bench_rows
+
+    time_vals = bench_plot["time_ms"] if pd is not None else [r["time_ms"] for r in bench_plot]
+    mean_support = bench_plot["mean_support"] if pd is not None else [r["mean_support"] for r in bench_plot]
+    labels = bench_plot["method"] if pd is not None else [r["method"] for r in bench_plot]
+
+    colors = plt.get_cmap("tab10").colors
+    bar_colors = [colors[i % len(colors)] for i in range(len(labels))]
+
+    plt.figure(figsize=(8, 4.0))
+    plt.bar(labels, time_vals, color=bar_colors)
+    plt.ylabel("avg forward time (ms)")
+    plt.title(rf"Runtime on CPU (B={B}, N={N})")
+    for i, v in enumerate(time_vals):
+        plt.text(i, v + 0.02, f"{v:.3f} ms", ha="center", va="bottom", fontsize=9)
+    savefig(os.path.join(cfg.out_dir, "activation_family_runtime.png"))
+
+    plt.figure(figsize=(8, 4.0))
+    plt.bar(labels, mean_support, color=bar_colors)
+    plt.ylabel("mean support size (#nonzeros)")
+    plt.title(rf"Sparsity (B={B}, N={N})")
+    for i, v in enumerate(mean_support):
+        plt.text(i, v + 0.05, f"{v:.1f}", ha="center", va="bottom", fontsize=9)
+    savefig(os.path.join(cfg.out_dir, "activation_family_support.png"))
+
+
+def demo_box_constraints(cfg: DemoCfg) -> None:
+    """Show how upper bounds enforce spread-out allocations versus simplex."""
+
+    set_seed(11)
+    B, N = 196, 24
+    z = torch.randn(B, N, device=cfg.device, dtype=cfg.dtype)
+
+    proj_simplex = SeparableQPProjection(n=N, xi=1.5, bounds_mode="fixed", m_init=0.0, M_init=1.0, bisection_iters=60)
+    proj_capped = SeparableQPProjection(
+        n=N,
+        xi=1.5,
+        bounds_mode="fixed",
+        m_init=0.0,
+        M_init=0.25,
+        bisection_iters=80,
+    )
+
+    x_simplex = proj_simplex(z)
+    x_capped = proj_capped(z)
+
+    print("\n[Box constraints] Upper bounds force balanced mass")
+    print_stats_table(
+        f"Row-wise summary (B={B}, N={N}, target $\\xi=1.5$)",
+        {"Simplex": row_stats(x_simplex, eps=cfg.eps_logx), "Capped": row_stats(x_capped, eps=cfg.eps_logx)},
+    )
+    print_stats_table(
+        "Feasibility checks",
+        {"Capped": feasibility_stats(x_capped, 0.0, 0.25, 1.5)},
+    )
+
+    plot_sorted_profiles_panel(
+        os.path.join(cfg.out_dir, "box_constraint_sorted_profiles.png"),
+        "Box constraint spreads mass vs simplex",
+        {"Simplex": x_simplex, "Capped (M=0.25)": x_capped},
+        logy=True,
+        include_support_hist=True,
+    )
+
+    plot_support_and_topk_panel(
+        os.path.join(cfg.out_dir, "box_constraint_support_topk.png"),
+        "Support/top-k mass with box cap",
+        {"Simplex": x_simplex, "Capped (M=0.25)": x_capped},
+        xi=1.5,
+        max_k=40,
+    )
 
 # -----------------------------
 # Demos
@@ -1086,6 +1334,7 @@ def main() -> None:
         "figure.facecolor": "white",
     })
 
+    demo_activation_family(cfg)
     demo_simplex_vs_softmax(cfg)
     demo_k_hot_budget(cfg)
     demo_adaptive_xi(cfg)
@@ -1094,6 +1343,7 @@ def main() -> None:
     demo_solve_from_beta(cfg)
     demo_fixed_z(cfg)
     demo_geometry_n2(cfg)
+    demo_box_constraints(cfg)
 
     print(f"\nSaved plots to: {os.path.abspath(cfg.out_dir)}")
 

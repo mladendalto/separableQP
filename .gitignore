@@ -1,0 +1,4 @@
+__pycache__/
+*.pyc
+demo_outputs/*.png
+demo_outputs/*.csv
