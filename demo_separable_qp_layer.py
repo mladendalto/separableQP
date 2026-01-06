@@ -298,6 +298,130 @@ def plot_value_panels(
     plt.close(fig)
 
 
+def plot_sorted_profiles_overview(
+    path: str,
+    title: str,
+    series: Dict[str, torch.Tensor],
+    qs: Tuple[float, float, float] = (0.1, 0.5, 0.9),
+    y_scales: Tuple[str, ...] = ("linear", "log"),
+    tol: float = 1e-12,
+    include_support_hist: bool = True,
+    topk_max_k: int | None = None,
+    topk_xi: float | None = None,
+) -> None:
+    """
+    Combined view of sorted-profile quantiles with optional support histogram and
+    mean top-k mass curves. Multiple y-scales can be rendered side-by-side to
+    avoid saving near-duplicate figures.
+    """
+
+    idx = None
+    xs_cache: Dict[str, torch.Tensor] = {}
+
+    n_axes = len(y_scales)
+    if include_support_hist:
+        n_axes += 1
+    if topk_max_k is not None:
+        n_axes += 1
+
+    fig, axes = plt.subplots(1, n_axes, figsize=(5.0 * n_axes, 4.8))
+    if not isinstance(axes, np.ndarray):
+        axes = np.array([axes])
+
+    ax_iter = iter(axes)
+    for y_scale in y_scales:
+        ax = next(ax_iter)
+        color_iter = cycle(plt.rcParams["axes.prop_cycle"].by_key().get("color", []))
+        for name, x in series.items():
+            xs = torch.sort(x.detach(), dim=-1, descending=True).values
+            xs_cache[name] = xs
+            if idx is None:
+                idx = torch.arange(xs.shape[-1]).cpu().numpy()
+            q_lo = torch.quantile(xs, qs[0], dim=0)
+            q_md = torch.quantile(xs, qs[1], dim=0)
+            q_hi = torch.quantile(xs, qs[2], dim=0)
+
+            color = next(color_iter)
+            ax.fill_between(idx, to_np(q_lo), to_np(q_hi), alpha=0.18, color=color, label=f"{name} q{qs[0]:.1f}-{qs[2]:.1f}")
+            ax.plot(idx, to_np(q_md), color=color, linewidth=2.0, label=f"{name} median")
+
+        if y_scale != "linear":
+            ax.set_yscale(y_scale)
+        ax.set_title(f"Sorted profile quantiles ({y_scale})")
+        ax.set_xlabel("sorted index")
+        ax.set_ylabel("value")
+        ax.legend()
+
+    if include_support_hist:
+        ax_hist = next(ax_iter)
+        bins = None
+        for name, xs in xs_cache.items():
+            l0 = (xs.detach() > tol).sum(dim=-1).cpu().numpy()
+            if bins is None:
+                bins = np.arange(-0.5, xs.shape[-1] + 1.5, 1.0)
+            ax_hist.hist(l0, bins=bins, alpha=0.55, label=name, rwidth=0.9)
+        ax_hist.set_title("Support size distribution")
+        ax_hist.set_xlabel("support size (# nonzeros)")
+        ax_hist.set_ylabel("count")
+        ax_hist.legend()
+
+    if topk_max_k is not None and idx is not None:
+        ax_topk = next(ax_iter)
+        k_vals = np.arange(1, min(topk_max_k, len(idx)) + 1)
+        for name, xs in xs_cache.items():
+            cumsum = torch.cumsum(xs[:, : len(k_vals)], dim=-1)
+            mean_curve = cumsum.mean(dim=0).cpu().numpy()
+            ax_topk.plot(k_vals, mean_curve, label=name)
+        if topk_xi is not None:
+            ax_topk.axhline(topk_xi, color="k", linestyle="--", linewidth=1.0, alpha=0.7, label=r"target $\xi$")
+        ax_topk.set_xlabel("k (top-k)")
+        ax_topk.set_ylabel("mean mass in top-k")
+        ax_topk.set_title("Mean cumulative mass by top-k")
+        ax_topk.legend()
+
+    fig.suptitle(title)
+    fig.tight_layout()
+    fig.savefig(path, dpi=170)
+    plt.close(fig)
+
+
+def plot_sorted_profiles_quantiles_panel(
+    path: str,
+    title: str,
+    series: Dict[str, torch.Tensor],
+    qs: Tuple[float, float, float] = (0.1, 0.5, 0.9),
+    logy: bool = False,
+) -> None:
+    """Render quantile bands for multiple tensors in separate subplots."""
+
+    fig, axes = plt.subplots(len(series), 1, figsize=(7.5, 3.2 * len(series)), sharex=True)
+    if not isinstance(axes, np.ndarray):
+        axes = np.array([axes])
+
+    idx = None
+    for ax, (name, x) in zip(axes, series.items()):
+        xs = torch.sort(x.detach(), dim=-1, descending=True).values
+        if idx is None:
+            idx = torch.arange(xs.shape[-1]).cpu().numpy()
+        q_lo = torch.quantile(xs, qs[0], dim=0)
+        q_md = torch.quantile(xs, qs[1], dim=0)
+        q_hi = torch.quantile(xs, qs[2], dim=0)
+
+        ax.fill_between(idx, to_np(q_lo), to_np(q_hi), alpha=0.25, label=f"{name} q{qs[0]:.1f}-{qs[2]:.1f}")
+        ax.plot(idx, to_np(q_md), label=f"{name} median")
+        if logy:
+            ax.set_yscale("log")
+        ax.set_ylabel("value")
+        ax.legend()
+        ax.grid(alpha=0.25, linestyle=":")
+
+    axes[-1].set_xlabel("sorted index")
+    fig.suptitle(title)
+    fig.tight_layout()
+    fig.savefig(path, dpi=170)
+    plt.close(fig)
+
+
 def plot_hist_logx(
     path: str,
     title: str,
@@ -563,14 +687,24 @@ def plot_piecewise_with_free_count(
 
     fig, ax1 = plt.subplots(figsize=(9, 4.8))
     for i in range(min(N, 10)):
-        ax1.plot(to_np(xis), to_np(X[:, i]), alpha=0.85, linewidth=1.3)
+        label = r"$x_i(\xi)$ traces" if i == 0 else None
+        ax1.plot(to_np(xis), to_np(X[:, i]), alpha=0.85, linewidth=1.3, label=label)
     ax1.set_xlabel(r"$\xi$")
     ax1.set_ylabel(r"$x_i$")
     ax1.set_title(title)
 
     ax2 = ax1.twinx()
-    ax2.plot(to_np(xis), free_counts, linewidth=2.0, alpha=0.8)
+    ax2.plot(to_np(xis), free_counts, linewidth=2.0, alpha=0.85, label="# free vars")
     ax2.set_ylabel("# free variables")
+
+    handles, labels = ax1.get_legend_handles_labels()
+    free_handles, free_labels = ax2.get_legend_handles_labels()
+    ax1.legend(
+        handles + free_handles,
+        labels + free_labels,
+        loc="upper left",
+        title=r"$x_i(\xi)$ traces (left) / active set (right)",
+    )
 
     fig.tight_layout()
     fig.savefig(path, dpi=160)
@@ -674,29 +808,50 @@ def demo_activation_family(cfg: DemoCfg) -> None:
         vline=0.0,
     )
 
-    plot_sorted_profiles_panel(
+    plot_sorted_profiles_quantiles_panel(
         os.path.join(cfg.out_dir, "activation_family_sorted_profiles.png"),
         "Sorted profile quantiles across activations",
         outs,
-        y_scale="linear",
-        include_support_hist=True,
+        logy=False,
     )
 
-    plot_sorted_profiles_panel(
+    plot_sorted_profiles_quantiles_panel(
         os.path.join(cfg.out_dir, "activation_family_sorted_profiles_log.png"),
         "Sorted profile quantiles across activations (log scale)",
         outs,
-        y_scale="log",
-        include_support_hist=True,
+        logy=True,
     )
 
-    plot_support_and_topk_panel(
-        os.path.join(cfg.out_dir, "activation_family_support_topk.png"),
-        "Support sizes and top-k mass",
-        outs,
-        xi=1.0,
-        max_k=40,
-    )
+    fig, axes = plt.subplots(len(outs), 2, figsize=(11, 2.9 * len(outs)), sharex="col")
+    if not isinstance(axes, np.ndarray):
+        axes = np.array([axes])
+    any_x = next(iter(outs.values()))
+    B, N = any_x.shape
+    bins = np.arange(-0.5, N + 1.5, 1.0)
+    k_vals = np.arange(1, min(40, N) + 1)
+    for (name, x), (ax_l, ax_r) in zip(outs.items(), axes):
+        l0 = (x.detach() > 1e-12).sum(dim=-1).cpu().numpy()
+        ax_l.hist(l0, bins=bins, alpha=0.65, rwidth=0.9)
+        ax_l.set_ylabel(name)
+        ax_l.grid(alpha=0.2, linestyle=":")
+
+        xs = torch.sort(x.detach(), dim=-1, descending=True).values
+        cumsum = torch.cumsum(xs[:, : len(k_vals)], dim=-1)
+        mean_curve = cumsum.mean(dim=0).cpu().numpy()
+        ax_r.plot(k_vals, mean_curve, label=name)
+        ax_r.grid(alpha=0.2, linestyle=":")
+
+    axes[-1, 0].set_xlabel(f"support size (# nonzeros out of N={N})")
+    axes[0, 0].set_title("Support size distribution")
+    axes[-1, 1].set_xlabel("k (top-k)")
+    axes[0, 1].set_title("Mean cumulative mass by top-k")
+    for ax_r in axes[:, 1]:
+        ax_r.axhline(1.0, color="k", linestyle="--", linewidth=1.0, alpha=0.7, label=r"target $\xi$")
+        ax_r.legend()
+    fig.suptitle(rf"Support sizes and top-k mass (B={B}, N={N})")
+    fig.tight_layout()
+    fig.savefig(os.path.join(cfg.out_dir, "activation_family_support_topk.png"), dpi=170)
+    plt.close(fig)
 
     bench_rows = benchmark_activation_family(activations, shape=(B, N), iters=60, warmup=10)
     complexity_lookup = {
@@ -734,8 +889,9 @@ def demo_activation_family(cfg: DemoCfg) -> None:
     plt.ylabel("avg forward time (ms)")
     plt.title(rf"Runtime on CPU (B={B}, N={N})")
     for i, v in enumerate(time_vals):
-        plt.text(i, v + 0.02, f"{v:.3f} ms", ha="center", va="bottom", fontsize=9)
-    plt.xticks(rotation=45, ha="right")
+        plt.text(i, v + max(time_vals) * 0.02, f"{v:.3f} ms", ha="center", va="bottom", fontsize=9)
+    plt.xticks(rotation=20, ha="right")
+    plt.ylim(0, max(time_vals) * 1.25)
     savefig(os.path.join(cfg.out_dir, "activation_family_runtime.png"))
 
     plt.figure(figsize=(8, 4.0))
@@ -744,7 +900,7 @@ def demo_activation_family(cfg: DemoCfg) -> None:
     plt.title(rf"Sparsity (B={B}, N={N})")
     for i, v in enumerate(mean_support):
         plt.text(i, v + 0.05, f"{v:.1f}", ha="center", va="bottom", fontsize=9)
-    plt.xticks(rotation=45, ha="right")
+    plt.xticks(rotation=20, ha="right")
     savefig(os.path.join(cfg.out_dir, "activation_family_support.png"))
 
 
@@ -778,28 +934,14 @@ def demo_box_constraints(cfg: DemoCfg) -> None:
         {"Capped": feasibility_stats(x_capped, 0.0, 0.25, 1.5)},
     )
 
-    plot_sorted_profiles_panel(
-        os.path.join(cfg.out_dir, "box_constraint_sorted_profiles.png"),
+    plot_sorted_profiles_overview(
+        os.path.join(cfg.out_dir, "box_constraint_overview.png"),
         "Box constraint spreads mass vs simplex",
         {"Simplex": x_simplex, "Capped (M=0.25)": x_capped},
-        y_scale="linear",
+        y_scales=("linear", "log"),
         include_support_hist=True,
-    )
-
-    plot_sorted_profiles_panel(
-        os.path.join(cfg.out_dir, "box_constraint_sorted_profiles_log.png"),
-        "Box constraint spreads mass vs simplex (log scale)",
-        {"Simplex": x_simplex, "Capped (M=0.25)": x_capped},
-        y_scale="log",
-        include_support_hist=True,
-    )
-
-    plot_support_and_topk_panel(
-        os.path.join(cfg.out_dir, "box_constraint_support_topk.png"),
-        "Support/top-k mass with box cap",
-        {"Simplex": x_simplex, "Capped (M=0.25)": x_capped},
-        xi=1.5,
-        max_k=40,
+        topk_max_k=40,
+        topk_xi=1.5,
     )
 
 # -----------------------------
@@ -849,20 +991,12 @@ def demo_simplex_vs_softmax(cfg: DemoCfg) -> None:
         vline=0.0,
     )
 
-    # sorted profile quantiles + support histogram (combined view)
-    plot_sorted_profiles_panel(
+    # sorted profile quantiles + support histogram (combined linear/log view)
+    plot_sorted_profiles_overview(
         os.path.join(cfg.out_dir, "simplex_sorted_profiles_panel.png"),
         "Sorted profiles (QP vs Softmax)",
         {"QP": x_qp, "Softmax": x_sm},
-        y_scale="linear",
-        include_support_hist=True,
-    )
-
-    plot_sorted_profiles_panel(
-        os.path.join(cfg.out_dir, "simplex_sorted_profiles_panel_log.png"),
-        "Sorted profiles (QP vs Softmax, log scale)",
-        {"QP": x_qp, "Softmax": x_sm},
-        y_scale="log",
+        y_scales=("linear", "log"),
         include_support_hist=True,
     )
 
@@ -1108,14 +1242,18 @@ def demo_learnable_bounds_unit(cfg: DemoCfg) -> None:
         xlim=None,
         rug=True,
     )
+    width_init = M0 - m0
+    width_final = M1 - m1
+    max_width = float(torch.max(torch.stack([width_init, width_final])).item())
+    xlim = (0.0, max(1e-6, max_width * 1.05))
     plot_hist(
         os.path.join(cfg.out_dir, "learned_bounds_width_compare_logy.png"),
         "Width (M-m): initial vs final (log-y density)",
-        {"width_init": (M0 - m0), "width_final": (M1 - m1)},
+        {"width_init": width_init, "width_final": width_final},
         bins=60,
         density=True,
         logy=True,
-        xlim=(0.0, 1.0),
+        xlim=xlim,
     )
 
     # output vs target error
@@ -1129,16 +1267,10 @@ def demo_learnable_bounds_unit(cfg: DemoCfg) -> None:
     )
 
     # sorted profiles quantiles: target vs final
-    plot_sorted_profiles_quantiles(
-        os.path.join(cfg.out_dir, "learn_bounds_sorted_profiles_target.png"),
-        "Target sorted profile: quantile band",
-        x_target,
-        logy=True,
-    )
-    plot_sorted_profiles_quantiles(
-        os.path.join(cfg.out_dir, "learn_bounds_sorted_profiles_final.png"),
-        "Final sorted profile: quantile band",
-        x_final,
+    plot_sorted_profiles_quantiles_panel(
+        os.path.join(cfg.out_dir, "learn_bounds_sorted_profiles_combined.png"),
+        "Target vs final sorted profile (quantile bands)",
+        {"Target": x_target, "Final": x_final},
         logy=True,
     )
 
