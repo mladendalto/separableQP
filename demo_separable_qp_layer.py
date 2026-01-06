@@ -480,7 +480,7 @@ def plot_piecewise_with_free_count(
     fig, ax1 = plt.subplots(figsize=(9, 4.8))
     for i in range(min(N, 10)):
         ax1.plot(to_np(xis), to_np(X[:, i]), alpha=0.85, linewidth=1.3)
-    ax1.set_xlabel(r"$\\xi$")
+    ax1.set_xlabel(r"$\xi$")
     ax1.set_ylabel(r"$x_i$")
     ax1.set_title(title)
 
