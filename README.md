@@ -1,6 +1,6 @@
 # Separable Box-Constrained Sum-Equality QP Layer
 
-A lightweight PyTorch layer for projecting vectors onto a box with a single sum-equality constraint. The projection is solved in closed form via a 1D root find, making it fast, deterministic, and fully differentiable. This README highlights the figures produced by `demo_separable_qp_layer.py` (saved under [`demo_outputs/`](demo_outputs/)).
+A lightweight PyTorch layer for projecting vectors onto a box with a single sum-equality constraint. The projection is solved in closed form via a 1D root find, making it fast, deterministic, and fully differentiable. This README highlights the figures produced by `demo_separable_qp_layer.py` (saved under `demo_outputs/` after you run the script locally).
 
 ## Problem statement
 
@@ -65,12 +65,14 @@ To explore additional modes (learnable $\xi$, non-uniform $\gamma$, k-hot budget
 
 ## Visual intuition
 
-The demo script generates figures under [`demo_outputs/`](demo_outputs/) that illustrate common regimes:
+The demo script generates figures under `demo_outputs/` that illustrate common regimes (run the script to populate the folder):
 
-- **Simplex-like activation:** compares the QP projection to softmax on $m=0$, $M=1$, $\xi=1$, $\gamma=1$ (e.g., the consolidated histogram panels in [`simplex_value_panels.png`](demo_outputs/simplex_value_panels.png), sorted-profile + support overlay in [`simplex_sorted_profiles_panel.png`](demo_outputs/simplex_sorted_profiles_panel.png), and the combined view in [`simplex_support_topk_panel.png`](demo_outputs/simplex_support_topk_panel.png)).
-- **k-hot / budgeted gating:** enforces $\sum x = k$ with box bounds (e.g., [`khot_sorted_profiles_quantiles.png`](demo_outputs/khot_sorted_profiles_quantiles.png) and [`khot_support_topk_panel.png`](demo_outputs/khot_support_topk_panel.png)).
-- **Geometry (2D):** shows contours, feasible segment, and solution for $N=2$ ([`contour_n2_geometry.png`](demo_outputs/contour_n2_geometry.png)).
-- **Effect of stiffness $\gamma$:** redistributes mass according to per-dimension weights ([`gamma_group_mass_compare.png`](demo_outputs/gamma_group_mass_compare.png)).
+- **Simplex-like activation:** compares the QP projection to softmax on $m=0$, $M=1$, $\xi=1$, $\gamma=1$ (e.g., the consolidated histogram panels in `simplex_value_panels.png`, sorted-profile + support overlay in `simplex_sorted_profiles_panel.png`, and the combined view in `simplex_support_topk_panel.png`).
+- **k-hot / budgeted gating:** enforces $\sum x = k$ with box bounds (e.g., `khot_sorted_profiles_quantiles.png` and `khot_support_topk_panel.png`).
+- **Geometry (2D):** shows contours, feasible segment, and solution for $N=2$ (`contour_n2_geometry.png`).
+- **Effect of stiffness $\gamma$:** redistributes mass according to per-dimension weights (`gamma_group_mass_compare.png`).
+- **Activation family benchmark:** compares sparsity and runtime for softmax, sparsemax, entmax (configurable $\alpha$), and this layer on the same logits (value/log panels in `activation_family_value_panels.png`, sorted profiles in `activation_family_sorted_profiles.png`, support vs top-k mass in `activation_family_support_topk.png`, runtime bar chart in `activation_family_runtime.png`, sparsity bar chart in `activation_family_support.png`, and the underlying CSV `activation_family_profile.csv`).
+- **Box constraints in action:** demonstrates how explicit upper bounds spread allocations compared to simplex-style normalization (`box_constraint_sorted_profiles.png` and `box_constraint_support_topk.png`).
 
 ## Installation
 
@@ -89,6 +91,23 @@ python demo_separable_qp_layer.py --help
 ```
 
 The script emits PNGs and printed statistics (row sums, support sizes, entropy, feasibility checks) to `demo_outputs/`.
+
+## Comparing with other sparse activations
+
+The demo now produces a side-by-side comparison of softmax, sparsemax, entmax-$\alpha$ (including $\alpha=1$ for softmax-like and $\alpha=2$ for sparsemax-like behavior), and this layer (all on the same logits). The plots above show both the sparsity profile and a quick CPU runtime bar chart. Raw measurements live in `demo_outputs/activation_family_profile.csv` so you can reproduce the simple complexity table in the README and compare against your own hardware.
+
+| Method | Similarity | Where SeparableQP Wins |
+| --- | --- | --- |
+| [Sparsemax (Martins et al., 2016)](https://arxiv.org/abs/1602.02068) | High. It is equivalent to this layer with $\gamma=1$, $m=0$, $M=1$. | Flexibility. Sparsemax is homoscedastic (assumes equal variance); this layer adapts curvature per class. |
+| [OptNet (Amos & Kolter, 2017)](https://arxiv.org/abs/1703.00443) | High. Solves generic QPs differentiably. | Speed. OptNet is $O(N^3)$ or iterative; this layer is $O(N\log N)$. In a Transformer, OptNet is unusable; this layer is feasible. |
+| [Constrained Sparsemax (Malaviya et al., 2018)](https://aclanthology.org/W18-5409) | Very high. Adds upper bounds to Sparsemax. | Learnable $\gamma$. They usually fix the quadratic penalty; learning $\gamma$ prevents dead gradients by softening curvature dynamically. |
+| [Entmax-$\alpha$ (Peters et al., 2019)](https://arxiv.org/abs/1905.05702) | Moderate–high. Controls sparsity with $\alpha$. | Exact feasibility. Entmax only enforces non-negativity; this layer hits the budget and box bounds exactly. |
+
+The runtime and sparsity figures in `demo_outputs/` highlight that SeparableQP matches or exceeds the sparsity of entmax/sparsemax while staying close to softmax in wall-clock time on CPU (see [`activation_family_runtime.png`](demo_outputs/activation_family_runtime.png) and [`activation_family_support.png`](demo_outputs/activation_family_support.png)).
+
+## Box constraints in practice
+
+To illustrate why explicit bounds matter, the demo includes a small allocation toy example. With only the simplex constraint ($m=0$, $M=1$) a handful of coordinates can dominate; adding $M=0.25$ forces mass to spread while still obeying the sum target. The contrast is visible once you regenerate `box_constraint_sorted_profiles.png` and the top-k mass/support panel `box_constraint_support_topk.png` via the demo.
 
 ## When to use this layer
 
