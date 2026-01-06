@@ -3,6 +3,7 @@
 A lightweight PyTorch layer for projecting vectors onto a box with a single sum-equality constraint. The projection is solved in closed form via a 1D root find, making it fast, deterministic, and fully differentiable. This README highlights the figures produced by `demo_separable_qp_layer.py` (saved under [`demo_outputs/`](demo_outputs/)).
 
 ## Problem statement
+
 For each row $x \in \mathbb{R}^N$ we solve
 
 $$
@@ -18,25 +19,29 @@ $$
 \min_x\; \sum_{i=1}^N \gamma_i\,(x_i - z_i)^2\quad\text{s.t.}\quad x \in \mathcal{C},\qquad
 \mathcal{C} = \{x: \sum_i x_i = \xi,\; m_i \le x_i \le M_i\}.
 $$
+
 Because $\gamma_i>0$, the objective is strictly convex and the solution is unique.
 
 ## Closed-form structure
+
 The KKT conditions yield a scalar Lagrange multiplier $\lambda$ with elementwise solution
 
 $$
- x_i^*(\lambda) = \operatorname{clip}\!\left(z_i + \frac{\lambda}{2\gamma_i},\; [m_i, M_i]\right),\qquad
+x_i^*(\lambda) = \operatorname{clip}\!\left(z_i + \frac{\lambda}{2\gamma_i},\; [m_i, M_i]\right),\qquad
  g(\lambda) = \sum_{i=1}^N x_i^*(\lambda) - \xi = 0.
 $$
 
 Solving the 1D root $g(\lambda)=0$ via bisection produces $x^*$ in $O(N \log \tfrac{1}{\varepsilon})$ time. The backward pass is analytic: gradients propagate through the free coordinates while active bounds receive subgradient-style signals.
 
 ## What the layer provides
+
 - **Projection layer:** `SeparableQPProjection` implements the forward/ backward identity above with configurable, optionally learnable parameters $\gamma$, $m$, $M$, and $\xi$.
 - **Beta-to-solution shortcut:** `SeparableQPSolveFromBeta` solves the quadratic directly from coefficients $(\beta,\gamma,m,M,\xi)$ without forming $z$.
 - **Deterministic autograd:** Custom `torch.autograd.Function` keeps gradients exact and avoids iterative solvers in the backward pass.
 - **Safe parameterizations:** `GammaParam` and `BoundsParam` ensure positivity of $\gamma$ and bound widths; `xi_mode="feasible_sigmoid"` keeps learned sums inside the feasible interval.
 
 ## Usage
+
 ```python
 import torch
 from separable_qp_layer import SeparableQPProjection
@@ -59,6 +64,7 @@ loss.backward()
 To explore additional modes (learnable $\xi$, non-uniform $\gamma$, k-hot budgets, etc.), see the runnable examples in `demo_separable_qp_layer.py`.
 
 ## Visual intuition
+
 The demo script generates figures under [`demo_outputs/`](demo_outputs/) that illustrate common regimes:
 
 - **Simplex-like activation:** compares the QP projection to softmax on $m=0$, $M=1$, $\xi=1$, $\gamma=1$ (e.g., the consolidated histogram panels in [`simplex_value_panels.png`](demo_outputs/simplex_value_panels.png), sorted-profile + support overlay in [`simplex_sorted_profiles_panel.png`](demo_outputs/simplex_sorted_profiles_panel.png), and the combined view in [`simplex_support_topk_panel.png`](demo_outputs/simplex_support_topk_panel.png)).
@@ -66,9 +72,8 @@ The demo script generates figures under [`demo_outputs/`](demo_outputs/) that il
 - **Geometry (2D):** shows contours, feasible segment, and solution for $N=2$ ([`contour_n2_geometry.png`](demo_outputs/contour_n2_geometry.png)).
 - **Effect of stiffness $\gamma$:** redistributes mass according to per-dimension weights ([`gamma_group_mass_compare.png`](demo_outputs/gamma_group_mass_compare.png)).
 
-Place the README next to the images to keep relative links valid.
-
 ## Installation
+
 Set up a Python environment (Python 3.9+ recommended) and install the dependencies:
 
 ```bash
@@ -78,12 +83,15 @@ pip install -r requirements.txt
 The `requirements.txt` pins the runtime needs for both the layer and the demo (PyTorch, NumPy, Matplotlib, and PyTest for tests).
 
 ## Running the demo
+
 ```bash
 python demo_separable_qp_layer.py --help
 ```
+
 The script emits PNGs and printed statistics (row sums, support sizes, entropy, feasibility checks) to `demo_outputs/`.
 
 ## When to use this layer
+
 - **Deterministic constrained activations:** enforce exact budgets in attention, gating, or allocation modules.
 - **Learnable bounds:** keep parameters inside $[m,M]$ during training without ad-hoc clipping.
 - **Replacement for softmax/sigmoid:** recover sparse simplex-like outputs with predictable sparsity via box constraints and $\gamma$ shaping.
