@@ -26,10 +26,10 @@ Because $\gamma_i > 0$, the objective is strictly convex and the solution is uni
 
 The KKT conditions yield a scalar Lagrange multiplier $\lambda$ and the elementwise solution
 
-$$
+```math
 x_i^*(\lambda) = \min\!\left\{M_i,\, \max\!\left\{m_i,\, z_i + \frac{\lambda}{2\gamma_i}\right\}\right\},\qquad
- g(\lambda) = \sum_{i=1}^N x_i^*(\lambda) - \xi = 0.
-$$
+g(\lambda) = \sum_{i=1}^N x_i^*(\lambda) - \xi = 0.
+```
 
 Solving the 1D root $g(\lambda)=0$ via bisection produces $x^*$ in $O(N \log \tfrac{1}{\varepsilon})$ time. The backward pass is analytic: gradients propagate through the free coordinates while active bounds receive subgradient-style signals.
 
