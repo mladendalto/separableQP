@@ -4,30 +4,30 @@ A lightweight PyTorch layer for projecting vectors onto a box with a single sum-
 
 ## Problem statement
 
-For each row $x \in \mathbb{R}^N$ we solve
+For each row $z \in \mathbb{R}^N$ we solve
 
 $$
 \begin{aligned}
-\min_{x\in\mathbb{R}^N}\;& \sum_{i=1}^N \left(\gamma_i x_i^2 + \beta_i x_i\right) \\
-\text{s.t.}\;& \sum_{i=1}^N x_i = \xi,\qquad m_i \le x_i \le M_i,\qquad \gamma_i>0.
+\min_{x\in\mathbb{R}^N}\quad & \sum_{i=1}^N \left(\gamma_i x_i^2 + \beta_i x_i\right) \\
+\text{s.t.}\quad & \sum_{i=1}^N x_i = \xi,\qquad m_i \le x_i \le M_i,\qquad \gamma_i > 0.
 \end{aligned}
 $$
 
 Ignoring constants, this is a **weighted projection** of the unconstrained minimizer $z_i = -\tfrac{\beta_i}{2\gamma_i}$ onto the feasible polytope:
 
 $$
-\min_x\; \sum_{i=1}^N \gamma_i\,(x_i - z_i)^2\quad\text{s.t.}\quad x \in \mathcal{C},\qquad
-\mathcal{C} = \{x: \sum_i x_i = \xi,\; m_i \le x_i \le M_i\}.
+\min_x \sum_{i=1}^N \gamma_i\,(x_i - z_i)^2\quad\text{s.t.}\quad x \in \mathcal{C},\qquad
+\mathcal{C} = \{x: \sum_i x_i = \xi,\ m_i \le x_i \le M_i\}.
 $$
 
-Because $\gamma_i>0$, the objective is strictly convex and the solution is unique.
+Because $\gamma_i > 0$, the objective is strictly convex and the solution is unique.
 
 ## Closed-form structure
 
-The KKT conditions yield a scalar Lagrange multiplier $\lambda$ with elementwise solution
+The KKT conditions yield a scalar Lagrange multiplier $\lambda$ and the elementwise solution
 
 $$
-x_i^*(\lambda) = \operatorname{clip}\!\left(z_i + \frac{\lambda}{2\gamma_i},\; [m_i, M_i]\right),\qquad
+x_i^*(\lambda) = \min\!\left\{M_i,\, \max\!\left\{m_i,\, z_i + \frac{\lambda}{2\gamma_i}\right\}\right\},\qquad
  g(\lambda) = \sum_{i=1}^N x_i^*(\lambda) - \xi = 0.
 $$
 
@@ -35,7 +35,7 @@ Solving the 1D root $g(\lambda)=0$ via bisection produces $x^*$ in $O(N \log \tf
 
 ## What the layer provides
 
-- **Projection layer:** `SeparableQPProjection` implements the forward/ backward identity above with configurable, optionally learnable parameters $\gamma$, $m$, $M$, and $\xi$.
+- **Projection layer:** `SeparableQPProjection` implements the forward/backward mapping above with configurable, optionally learnable parameters $\gamma$, $m$, $M$, and $\xi$.
 - **Beta-to-solution shortcut:** `SeparableQPSolveFromBeta` solves the quadratic directly from coefficients $(\beta,\gamma,m,M,\xi)$ without forming $z$.
 - **Deterministic autograd:** Custom `torch.autograd.Function` keeps gradients exact and avoids iterative solvers in the backward pass.
 - **Safe parameterizations:** `GammaParam` and `BoundsParam` ensure positivity of $\gamma$ and bound widths; `xi_mode="feasible_sigmoid"` keeps learned sums inside the feasible interval.
@@ -99,7 +99,7 @@ The demo now produces a side-by-side comparison of softmax, sparsemax, entmax-$\
 | Method | Similarity | Where SeparableQP Wins |
 | --- | --- | --- |
 | [Sparsemax (Martins et al., 2016)](https://arxiv.org/abs/1602.02068) | High. It is equivalent to this layer with $\gamma=1$, $m=0$, $M=1$. | Flexibility. Sparsemax is homoscedastic (assumes equal variance); this layer adapts curvature per class. |
-| [OptNet (Amos & Kolter, 2017)](https://arxiv.org/abs/1703.00443) | High. Solves generic QPs differentiably. | Speed. OptNet is $O(N^3)$ or iterative; this layer is $O(N\log N)$. In a Transformer, OptNet is unusable; this layer is feasible. |
+| [OptNet (Amos & Kolter, 2017)](https://arxiv.org/abs/1703.00443) | High. Solves generic QPs differentiably. | Speed. OptNet is $O(N^3)$ or iterative; this layer is $O(N \log(1/\varepsilon))$ with bisection (linear in $N$ per iteration). In a Transformer, OptNet is often too expensive; this layer is practical. |
 | [Constrained Sparsemax (Malaviya et al., 2018)](https://aclanthology.org/W18-5409) | Very high. Adds upper bounds to Sparsemax. | Learnable $\gamma$. They usually fix the quadratic penalty; learning $\gamma$ prevents dead gradients by softening curvature dynamically. |
 | [Entmax-$\alpha$ (Peters et al., 2019)](https://arxiv.org/abs/1905.05702) | Moderate–high. Controls sparsity with $\alpha$. | Exact feasibility. Entmax only enforces non-negativity; this layer hits the budget and box bounds exactly. |
 
