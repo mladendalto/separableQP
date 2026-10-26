@@ -101,7 +101,7 @@ The demo now produces a side-by-side comparison of softmax, sparsemax, entmax-$\
 | [Sparsemax (Martins et al., 2016)](https://arxiv.org/abs/1602.02068) | High. It is equivalent to this layer with $\gamma=1$, $m=0$, $M=1$. | Flexibility. Sparsemax is homoscedastic (assumes equal variance); this layer adapts curvature per class. |
 | [OptNet (Amos & Kolter, 2017)](https://arxiv.org/abs/1703.00443) | High. Solves generic QPs differentiably. | Speed. OptNet is $O(N^3)$ or iterative; this layer is $O(N \log(1/\varepsilon))$ with bisection (linear in $N$ per iteration). In a Transformer, OptNet is often too expensive; this layer is practical. |
 | [Constrained Sparsemax (Malaviya et al., 2018)](https://aclanthology.org/W18-5409) | Very high. Adds upper bounds to Sparsemax. | Learnable $\gamma$. They usually fix the quadratic penalty; learning $\gamma$ prevents dead gradients by softening curvature dynamically. |
-| [Entmax-$\alpha$ (Peters et al., 2019)](https://arxiv.org/abs/1905.05702) | Moderate–high. Controls sparsity with $\alpha$. | Exact feasibility. Entmax only enforces non-negativity; this layer hits the budget and box bounds exactly. |
+| [Entmax-$\alpha$ (Peters et al., 2019)](https://arxiv.org/abs/1905.05702) | Moderateâ€“high. Controls sparsity with $\alpha$. | Exact feasibility. Entmax only enforces non-negativity; this layer hits the budget and box bounds exactly. |
 
 The runtime and sparsity figures in `demo_outputs/` highlight that SeparableQP matches or exceeds the sparsity of entmax/sparsemax while staying close to softmax in wall-clock time on CPU (see [`activation_family_runtime.png`](demo_outputs/activation_family_runtime.png) and [`activation_family_support.png`](demo_outputs/activation_family_support.png)).
 
@@ -116,3 +116,8 @@ To illustrate why explicit bounds matter, the demo includes a small allocation t
 - **Replacement for softmax/sigmoid:** recover sparse simplex-like outputs with predictable sparsity via box constraints and $\gamma$ shaping.
 
 Because the solver is analytical and batched, it is well-suited for fast inference or as a drop-in differentiable projection in larger models.
+
+
+## Preserved local demonstration
+
+[QP_projection_layer_demo.ipynb](QP_projection_layer_demo.ipynb) and [its PDF](separable_QP_demo.pdf) were recovered from the local checkout during consolidation. Notebook troubleshooting/install cells and stored execution outputs were removed for a clean public source copy; the exact original notebook is preserved in the private cleanup snapshots. The current layer implementation and existing demonstration script remain unchanged.

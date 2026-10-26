@@ -2,3 +2,12 @@ __pycache__/
 *.pyc
 demo_outputs/*.png
 demo_outputs/*.csv
+
+**/.idea/
+**/.vscode/
+**/__pycache__/
+*.py[cod]
+**/.pytest_cache/
+**/venv/
+**/.venv/
+/demo_outputs/
